@@ -26,7 +26,7 @@ public static class ModelInformationHelper
     /// <returns>A list of model file details.</returns>
     public static async Task<List<ModelFileDetails>> GetDownloadFilesFromGitHub(GitHubUrl url, CancellationToken cancellationToken)
     {
-        string getModelDetailsUrl = $"https://api.github.com/repos/{url.Organization}/{url.Repo}/contents/{url.Path}?ref={url.Ref}";
+        string getModelDetailsUrl = GitHubUrl.BuildApiUrl(url.Organization, url.Repo, url.Ref, url.Path);
 
         // call api and get json
         using var client = new HttpClient();
@@ -58,13 +58,55 @@ public static class ModelInformationHelper
         }
 
         return files.Select(f =>
-            new ModelFileDetails()
+        {
+            string? sha256 = null;
+
+            if (f.Content != null && f.Encoding == "base64")
+            {
+                try
+                {
+                    var decodedContent = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(f.Content));
+                    sha256 = ParseLfsPointerSha256(decodedContent);
+                }
+                catch (FormatException)
+                {
+                    Debug.WriteLine($"Failed to decode base64 content for {f.Path}");
+                }
+            }
+
+            return new ModelFileDetails()
             {
                 DownloadUrl = f.DownloadUrl,
                 Size = f.Size,
                 Name = (f.Path ?? string.Empty).Split(["/"], StringSplitOptions.RemoveEmptyEntries).LastOrDefault(),
-                Path = f.Path
-            }).ToList();
+                Path = f.Path,
+                Sha256 = sha256
+            };
+        }).ToList();
+    }
+
+    /// <summary>
+    /// Parses a Git LFS pointer file content to extract the SHA256 hash.
+    /// </summary>
+    /// <param name="lfsPointerContent">The content of the LFS pointer file.</param>
+    /// <returns>The SHA256 hash if found, otherwise null.</returns>
+    private static string? ParseLfsPointerSha256(string lfsPointerContent)
+    {
+        if (string.IsNullOrEmpty(lfsPointerContent))
+        {
+            return null;
+        }
+
+        var lines = lfsPointerContent.Split(['\n', '\r'], StringSplitOptions.RemoveEmptyEntries);
+        foreach (var line in lines)
+        {
+            if (line.StartsWith("oid sha256:", StringComparison.OrdinalIgnoreCase))
+            {
+                return line.Substring("oid sha256:".Length).Trim();
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -76,26 +118,17 @@ public static class ModelInformationHelper
     /// <returns>A list of model file details.</returns>
     public static async Task<List<ModelFileDetails>> GetDownloadFilesFromHuggingFace(HuggingFaceUrl hfUrl, HttpMessageHandler? httpMessageHandler = null, CancellationToken cancellationToken = default)
     {
-        string getModelDetailsUrl;
-
-        if (hfUrl.IsFile)
+        string? path = hfUrl.Path;
+        if (hfUrl.IsFile && hfUrl.Path != null)
         {
-            getModelDetailsUrl = $"https://huggingface.co/api/models/{hfUrl.Organization}/{hfUrl.Repo}/tree/{hfUrl.Ref}";
-            if (hfUrl.Path != null)
-            {
-                var filePath = hfUrl.Path.Split('/');
-                filePath = filePath.Take(filePath.Length - 1).ToArray();
+            // For files, get the parent directory path
+            var filePath = hfUrl.Path.Split('/');
+            path = filePath.Length > 1
+                ? string.Join("/", filePath.Take(filePath.Length - 1))
+                : null;
+        }
 
-                if (filePath.Length > 0)
-                {
-                    getModelDetailsUrl = $"{getModelDetailsUrl}/{string.Join("/", filePath)}";
-                }
-            }
-        }
-        else
-        {
-            getModelDetailsUrl = $"https://huggingface.co/api/models/{hfUrl.PartialUrl}";
-        }
+        string getModelDetailsUrl = HuggingFaceUrl.BuildApiUrl(hfUrl.Organization, hfUrl.Repo, hfUrl.Ref, path);
 
         // call api and get json
         using var client = new HttpClient();
@@ -121,7 +154,8 @@ public static class ModelInformationHelper
 
         if (hfFiles.Any(f => f.Type == "directory"))
         {
-            var baseUrl = $"https://huggingface.co/api/models/{hfUrl.Organization}/{hfUrl.Repo}/tree/{hfUrl.Ref}";
+            // Build base API URL for directory traversal (without path, will append paths in loop)
+            var baseUrl = HuggingFaceUrl.BuildApiUrl(hfUrl.Organization, hfUrl.Repo, hfUrl.Ref);
 
             using var httpClient = httpMessageHandler != null ? new HttpClient(httpMessageHandler) : new HttpClient();
 
@@ -171,14 +205,28 @@ public static class ModelInformationHelper
             await actionBlock.Completion;
         }
 
-        return hfFiles.Where(f => f.Type != "directory").Select(f =>
-            new ModelFileDetails()
+        return hfFiles.Where(f => f.Type != "directory" && !string.IsNullOrEmpty(f.Path)).Select(f =>
+        {
+            string? sha256 = null;
+            if (f.Lfs?.Oid != null)
             {
-                DownloadUrl = $"https://huggingface.co/{hfUrl.Organization}/{hfUrl.Repo}/resolve/{hfUrl.Ref}/{f.Path}",
+                sha256 = f.Lfs.Oid;
+                if (sha256.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
+                {
+                    sha256 = sha256.Substring(7);
+                }
+            }
+
+            // f.Path is guaranteed to be non-null due to the Where filter above
+            return new ModelFileDetails()
+            {
+                DownloadUrl = HuggingFaceUrl.BuildResolveUrl(hfUrl.Organization, hfUrl.Repo, hfUrl.Ref, f.Path!),
                 Size = f.Size,
-                Name = (f.Path ?? string.Empty).Split(["/"], StringSplitOptions.RemoveEmptyEntries).LastOrDefault(),
-                Path = f.Path
-            }).ToList();
+                Name = f.Path!.Split(["/"], StringSplitOptions.RemoveEmptyEntries).LastOrDefault(),
+                Path = f.Path,
+                Sha256 = sha256
+            };
+        }).ToList();
     }
 
     /// <summary>

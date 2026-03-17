@@ -16,6 +16,7 @@ using Microsoft.UI.Xaml.Navigation;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using Windows.ApplicationModel.DataTransfer;
@@ -29,7 +30,7 @@ internal sealed partial class ScenarioPage : Page
     private readonly Dictionary<string, ExecutionProviderDevicePolicy> executionProviderDevicePolicies = new()
     {
         { "Default", ExecutionProviderDevicePolicy.DEFAULT },
-        { "Max Efficency", ExecutionProviderDevicePolicy.MAX_EFFICIENCY },
+        { "Max Efficiency", ExecutionProviderDevicePolicy.MAX_EFFICIENCY },
         { "Max Performance", ExecutionProviderDevicePolicy.MAX_PERFORMANCE },
         { "Minimize Overall Power", ExecutionProviderDevicePolicy.MIN_OVERALL_POWER },
         { "Prefer NPU", ExecutionProviderDevicePolicy.PREFER_NPU },
@@ -97,10 +98,10 @@ internal sealed partial class ScenarioPage : Page
 
         List<List<ModelType>> modelDetailsList = [samples.SelectMany(s => s.Model1Types).ToList()];
 
-        // assume if first sample has two models, then all of them should need two models
+        // if any sample has a second model, collect all Model2Types from samples that define them
         if (samples[0].Model2Types != null)
         {
-            modelDetailsList.Add(samples.SelectMany(s => s.Model2Types!).ToList());
+            modelDetailsList.Add(samples.Where(s => s.Model2Types != null).SelectMany(s => s.Model2Types!).ToList());
         }
 
         var preSelectedModels = await App.MainWindow.ModelPicker.Load(modelDetailsList, initialModelToLoad);
@@ -128,8 +129,9 @@ internal sealed partial class ScenarioPage : Page
         {
             var registeredProviders = await catalog.EnsureAndRegisterCertifiedAsync();
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            Debug.WriteLine($"Failed to register execution providers: {ex}");
         }
 
         supportedHardwareAccelerators = [new([HardwareAccelerator.CPU], "CPU", "CPU", "CPU")];
