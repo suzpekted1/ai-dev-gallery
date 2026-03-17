@@ -1,0 +1,16 @@
+{
+  "description": "Docker Desktop settings-store.json template with hardware acceleration disabled",
+  "note": "If Docker Desktop still has DPI scaling issues after running fix-dpi-scaling.ps1, you may need to disable hardware acceleration.",
+  "instructions": [
+    "1. Close Docker Desktop completely",
+    "2. Navigate to: %APPDATA%\\Docker\\settings.json",
+    "3. Backup the existing settings.json file",
+    "4. Add or modify the 'hardwareAcceleration' setting to false",
+    "5. Restart Docker Desktop"
+  ],
+  "settings": {
+    "hardwareAcceleration": false,
+    "note": "Setting hardwareAcceleration to false may help resolve DPI scaling issues on some systems"
+  },
+  "alternative_location": "The settings file may also be located at: %LOCALAPPDATA%\\Docker\\settings.json"
+}
