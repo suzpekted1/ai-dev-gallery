@@ -1,0 +1,228 @@
+# =============================================================================
+# Fine-Tuning Configuration: Nemotron Mini for OSINT Analysis
+# =============================================================================
+# This config defines the LoRA fine-tuning setup for adapting
+# nvidia/Nemotron-Mini-4B-Instruct to OSINT-specific tasks such as
+# nmap output parsing, Shodan result analysis, and dossier generation.
+
+base_model: nvidia/Nemotron-Mini-4B-Instruct
+
+training_data:
+  path: data/osint_finetune_dataset.jsonl
+  format: jsonl
+  validation_split: 0.1
+
+output_dir: models/nemotron-mini-osint-lora
+
+# -----------------------------------------------------------------------------
+# LoRA Configuration
+# -----------------------------------------------------------------------------
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+
+# -----------------------------------------------------------------------------
+# Training Arguments
+# -----------------------------------------------------------------------------
+training:
+  epochs: 3
+  batch_size: 4
+  learning_rate: 2.0e-4
+  warmup_steps: 100
+  weight_decay: 0.01
+  max_seq_length: 4096
+  gradient_accumulation_steps: 4
+  fp16: true
+  logging_steps: 10
+  save_steps: 200
+  eval_steps: 200
+
+# -----------------------------------------------------------------------------
+# Training Data Format
+# -----------------------------------------------------------------------------
+# Each training example uses the chat format with three roles:
+#
+#   system:    "You are an expert OSINT analyst and penetration testing
+#               assistant running on Kali Linux. Analyze the provided tool
+#               output and produce structured, actionable intelligence.
+#               Flag critical findings, suggest next steps, and maintain
+#               strict operational security."
+#
+#   user:      Provides raw tool output (nmap scan, Shodan JSON, WHOIS
+#              record, etc.) along with a brief task instruction.
+#
+#   assistant: Returns structured analysis with severity ratings, key
+#              findings, recommended next actions, and OPSEC notes.
+
+# -----------------------------------------------------------------------------
+# Example Training Data Entries
+# -----------------------------------------------------------------------------
+examples:
+  - description: Nmap output parsing
+    messages:
+      - role: system
+        content: >
+          You are an expert OSINT analyst and penetration testing assistant
+          running on Kali Linux. Analyze the provided tool output and produce
+          structured, actionable intelligence. Flag critical findings, suggest
+          next steps, and maintain strict operational security.
+      - role: user
+        content: >
+          Analyze this nmap scan result:
+
+          PORT     STATE SERVICE     VERSION
+          22/tcp   open  ssh         OpenSSH 7.4 (protocol 2.0)
+          80/tcp   open  http        Apache httpd 2.4.6 ((CentOS))
+          443/tcp  open  ssl/http    Apache httpd 2.4.6 ((CentOS))
+          3306/tcp open  mysql       MySQL 5.7.44
+          8080/tcp open  http-proxy  Squid http proxy 3.5.20
+      - role: assistant
+        content: >
+          ## Nmap Scan Analysis
+
+          **Target Profile:** CentOS Linux server running a web stack with database.
+
+          ### Critical Findings
+          - **[HIGH]** MySQL 5.7.44 exposed on port 3306 — should not be
+            internet-facing. Check for default credentials and known CVEs.
+          - **[MEDIUM]** Apache 2.4.6 is significantly outdated (EOL). Multiple
+            known vulnerabilities exist including CVE-2021-44790 (buffer overflow).
+          - **[MEDIUM]** OpenSSH 7.4 is outdated. Vulnerable to CVE-2018-15473
+            (username enumeration).
+          - **[LOW]** Squid 3.5.20 proxy on 8080 — verify it is not an open proxy.
+
+          ### Recommended Next Steps
+          1. Run `nmap --script vuln` against identified services for CVE detection.
+          2. Enumerate MySQL with `nmap --script mysql-*` scripts.
+          3. Check Squid proxy for open relay: `curl -x http://target:8080 http://ifconfig.me`.
+          4. Run `nikto -h https://target` for web vulnerability scanning.
+
+          ### OPSEC Notes
+          - Aggressive scanning of MySQL may trigger IDS alerts.
+          - Use Tor or proxy rotation for follow-up reconnaissance.
+
+  - description: Shodan result analysis
+    messages:
+      - role: system
+        content: >
+          You are an expert OSINT analyst and penetration testing assistant
+          running on Kali Linux. Analyze the provided tool output and produce
+          structured, actionable intelligence. Flag critical findings, suggest
+          next steps, and maintain strict operational security.
+      - role: user
+        content: >
+          Analyze this Shodan host result:
+
+          {
+            "ip_str": "203.0.113.50",
+            "org": "Example Corp",
+            "os": "Linux 3.x",
+            "ports": [22, 80, 443, 8443, 9200],
+            "vulns": ["CVE-2021-44228", "CVE-2023-44487"],
+            "hostnames": ["mail.example.com", "vpn.example.com"],
+            "last_update": "2024-11-15T08:30:00Z"
+          }
+      - role: assistant
+        content: >
+          ## Shodan Host Analysis
+
+          **Host:** 203.0.113.50 (Example Corp)
+          **Hostnames:** mail.example.com, vpn.example.com
+          **OS:** Linux 3.x (outdated kernel)
+
+          ### Critical Findings
+          - **[CRITICAL]** CVE-2021-44228 (Log4Shell) — Remote code execution
+            via Log4j. Port 9200 suggests Elasticsearch, a common Log4Shell vector.
+          - **[HIGH]** CVE-2023-44487 (HTTP/2 Rapid Reset) — DoS vulnerability
+            affecting HTTP/2-enabled services on ports 443 and 8443.
+          - **[HIGH]** Port 9200 (Elasticsearch) exposed — often contains
+            sensitive indexed data. Check for unauthenticated access.
+          - **[MEDIUM]** Dual-purpose host (mail + VPN) increases attack surface.
+
+          ### Recommended Next Steps
+          1. Verify Elasticsearch access: `curl -s http://203.0.113.50:9200/_cat/indices`.
+          2. Check for Log4Shell: test JNDI injection on Elasticsearch endpoint.
+          3. Enumerate SSL certificates on 443 and 8443 for additional subdomains.
+          4. Correlate hostnames with DNS records for infrastructure mapping.
+
+          ### OPSEC Notes
+          - Elasticsearch enumeration is passive if read-only; avoid write operations.
+          - Use distinct Tor circuits for mail vs. VPN reconnaissance to avoid correlation.
+
+  - description: Dossier generation
+    messages:
+      - role: system
+        content: >
+          You are an expert OSINT analyst and penetration testing assistant
+          running on Kali Linux. Analyze the provided tool output and produce
+          structured, actionable intelligence. Flag critical findings, suggest
+          next steps, and maintain strict operational security.
+      - role: user
+        content: >
+          Generate a target dossier from these combined findings:
+
+          Domain: example.com
+          WHOIS Registrant: John Smith, Example Corp, registered 2015-03-12
+          DNS Records: A 203.0.113.50, MX mail.example.com, TXT "v=spf1 include:_spf.google.com ~all"
+          Subdomains found: www, mail, vpn, dev, staging, jenkins
+          Shodan ports on 203.0.113.50: 22, 80, 443, 8443, 9200
+          LinkedIn employees: 45 profiles found, 12 in IT/Engineering
+          GitHub repos: 3 public repos under "example-corp" org
+          Breached credentials: 23 entries found in public breach databases
+      - role: assistant
+        content: >
+          ## Target Dossier: example.com
+
+          **Organization:** Example Corp
+          **Primary Contact:** John Smith (Registrant)
+          **Domain Age:** Registered 2015-03-12 (~9 years)
+          **Risk Rating:** HIGH
+
+          ---
+
+          ### Infrastructure Summary
+          | Asset              | Details                     | Risk   |
+          |--------------------|-----------------------------|--------|
+          | Primary IP         | 203.0.113.50                | HIGH   |
+          | Mail               | Google Workspace (SPF)      | LOW    |
+          | VPN                | vpn.example.com             | MEDIUM |
+          | CI/CD              | jenkins.example.com         | HIGH   |
+          | Dev/Staging        | dev/staging.example.com     | HIGH   |
+          | Elasticsearch      | Port 9200 exposed           | HIGH   |
+
+          ### Key Intelligence
+          - **Jenkins exposed** — CI/CD servers are high-value targets for
+            supply-chain attacks. Likely contains deployment credentials.
+          - **Dev/Staging subdomains** — often have weaker security controls
+            and may leak pre-production data or API keys.
+          - **23 breached credentials** — credential stuffing attacks viable
+            against VPN, Jenkins, and other authenticated services.
+          - **Google Workspace** — phishing vector via SPF-aligned spoofing
+            of internal addresses.
+
+          ### Organizational Intelligence
+          - 45 LinkedIn profiles mapped; 12 IT/Engineering staff identified
+            for targeted social engineering.
+          - 3 public GitHub repos may contain hardcoded secrets, internal
+            infrastructure references, or commit-history leaks.
+
+          ### Recommended Attack Paths (Prioritized)
+          1. Jenkins unauthenticated access or default credentials.
+          2. Credential stuffing against VPN with breached data.
+          3. Elasticsearch data exfiltration via unauthenticated API.
+          4. GitHub repo mining for secrets (truffleHog/gitleaks).
+          5. Phishing campaign targeting IT staff via Google Workspace.
+
+          ### OPSEC Notes
+          - Rotate proxies between each reconnaissance phase.
+          - Avoid direct scanning of VPN endpoint — may log source IPs aggressively.
+          - Use separate identities for LinkedIn OSINT and technical recon.
